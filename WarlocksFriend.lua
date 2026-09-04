@@ -15,8 +15,8 @@ local INSPECT_TIMEOUT = 8.00
 local INSPECT_CACHE_TTL = 300.00
 local EXPECTED_COVERAGE_GRACE = 3.00
 
-local ALERT_SOUND = "Sound\\Interface\\RaidWarning.wav"
-local EXPIRE_SOUND = "Sound\\Interface\\AlarmClockWarning3.wav"
+local DEFAULT_ALERT_SOUND = "Sound\\Interface\\RaidWarning.wav"
+local DEFAULT_EXPIRE_SOUND = "Sound\\Interface\\AlarmClockWarning3.wav"
 
 local DEFAULTS = {
 	locked = true,
@@ -39,6 +39,10 @@ local DEFAULTS = {
 		centerText = false,
 		useElvUIStyle = false,
 		useElvUIMover = false,
+	},
+	sounds = {
+		alert = DEFAULT_ALERT_SOUND,
+		expire = DEFAULT_EXPIRE_SOUND,
 	},
 	curse = {
 		mode = "auto",
@@ -81,6 +85,58 @@ for _, mode in ipairs(CURSE_MODES) do
 	CURSE_MODE_LABELS[mode.key] = mode.label
 	CURSE_MODE_VALUES[mode.key] = mode.label
 end
+
+local SOUND_TYPES = {
+	{ key = "alert", label = "General alert sound" },
+	{ key = "expire", label = "Expiration alert sound" },
+}
+
+local SOUND_TYPE_LABELS = {}
+for _, soundType in ipairs(SOUND_TYPES) do
+	SOUND_TYPE_LABELS[soundType.key] = soundType.label
+end
+
+local SOUND_PRESETS = {
+	{ key = "none", label = "None", path = "" },
+	{ key = "raidwarning", label = "Raid Warning", path = DEFAULT_ALERT_SOUND },
+	{ key = "alarm3", label = "Alarm Clock Warning 3", path = DEFAULT_EXPIRE_SOUND },
+	{ key = "levelup", label = "Level Up", path = "Sound\\Interface\\LevelUp.wav" },
+	{ key = "wardrum", label = "War Drum", path = "Sound\\Event Sounds\\Event_wardrum_ogre.wav" },
+	{ key = "scourgehorn", label = "Scourge Horn", path = "Sound\\Events\\scourge_horn.wav" },
+}
+
+local SOUND_PRESET_LABELS = {
+	custom = "Custom path",
+}
+local SOUND_PRESET_VALUES = {
+	custom = "Custom path",
+}
+local SOUND_PRESETS_BY_KEY = {}
+local SOUND_PRESETS_BY_PATH = {}
+for _, preset in ipairs(SOUND_PRESETS) do
+	SOUND_PRESET_LABELS[preset.key] = preset.label
+	SOUND_PRESET_VALUES[preset.key] = preset.label
+	SOUND_PRESETS_BY_KEY[preset.key] = preset
+	SOUND_PRESETS_BY_PATH[string.lower(preset.path)] = preset.key
+end
+
+local SOUND_PRESET_ALIASES = {
+	none = "none",
+	off = "none",
+	disabled = "none",
+	raid = "raidwarning",
+	raidwarning = "raidwarning",
+	warning = "raidwarning",
+	alarm = "alarm3",
+	alarm3 = "alarm3",
+	level = "levelup",
+	levelup = "levelup",
+	drum = "wardrum",
+	wardrum = "wardrum",
+	horn = "scourgehorn",
+	scourge = "scourgehorn",
+	scourgehorn = "scourgehorn",
+}
 
 local THRESHOLD_LABELS = {}
 for _, option in ipairs(THRESHOLD_OPTIONS) do
@@ -142,6 +198,26 @@ local CURSE_MODE_ALIASES = {
 	none = "off",
 	disabled = "off",
 	disable = "off",
+}
+
+local SOUND_TYPE_ALIASES = {
+	alert = "alert",
+	alerts = "alert",
+	general = "alert",
+	normal = "alert",
+	main = "alert",
+	missing = "alert",
+	recommendation = "alert",
+	recommendations = "alert",
+	curse = "alert",
+	expire = "expire",
+	expiring = "expire",
+	expiration = "expire",
+	threshold = "expire",
+	dot = "expire",
+	dots = "expire",
+	aura = "expire",
+	auras = "expire",
 }
 
 local BOOLEAN_ALIASES = {
@@ -245,6 +321,10 @@ local function RoundThreshold(value)
 	return Clamp(math.floor((value * 2) + 0.5) / 2, 0, MAX_THRESHOLD)
 end
 
+local function Trim(value)
+	return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
 local function ParseBoolean(value)
 	if not value then
 		return nil
@@ -294,6 +374,17 @@ function WF:InitializeDB()
 	end
 	if type(self.db.style.useElvUIMover) ~= "boolean" then
 		self.db.style.useElvUIMover = DEFAULTS.style.useElvUIMover
+	end
+
+	if type(self.db.sounds) ~= "table" then
+		self.db.sounds = {}
+	end
+	CopyDefaults(DEFAULTS.sounds, self.db.sounds)
+	if type(self.db.sounds.alert) ~= "string" then
+		self.db.sounds.alert = DEFAULTS.sounds.alert
+	end
+	if type(self.db.sounds.expire) ~= "string" then
+		self.db.sounds.expire = DEFAULTS.sounds.expire
 	end
 
 	if type(self.db.curse) ~= "table" then
@@ -664,6 +755,79 @@ function WF:RegisterElvUIOptions()
 				end,
 				set = function(_, value)
 					WF:SetPreferAgonyOnMobs(value)
+				end,
+			},
+			soundHeader = {
+				order = 13,
+				type = "header",
+				name = "Sounds",
+			},
+			alertSoundPreset = {
+				order = 14,
+				type = "select",
+				name = "General alert preset",
+				values = SOUND_PRESET_VALUES,
+				get = function()
+					return WF:GetSoundPresetKey("alert")
+				end,
+				set = function(_, value)
+					if value ~= "custom" then
+						WF:SetSoundFromPreset("alert", value)
+					end
+				end,
+			},
+			alertSoundPath = {
+				order = 15,
+				type = "input",
+				width = "full",
+				name = "General alert path",
+				get = function()
+					return WF:GetSoundPath("alert")
+				end,
+				set = function(_, value)
+					WF:SetSoundPath("alert", value)
+				end,
+			},
+			testAlertSound = {
+				order = 16,
+				type = "execute",
+				name = "Test general alert",
+				func = function()
+					WF:TestSound("alert")
+				end,
+			},
+			expireSoundPreset = {
+				order = 17,
+				type = "select",
+				name = "Expiration alert preset",
+				values = SOUND_PRESET_VALUES,
+				get = function()
+					return WF:GetSoundPresetKey("expire")
+				end,
+				set = function(_, value)
+					if value ~= "custom" then
+						WF:SetSoundFromPreset("expire", value)
+					end
+				end,
+			},
+			expireSoundPath = {
+				order = 18,
+				type = "input",
+				width = "full",
+				name = "Expiration alert path",
+				get = function()
+					return WF:GetSoundPath("expire")
+				end,
+				set = function(_, value)
+					WF:SetSoundPath("expire", value)
+				end,
+			},
+			testExpireSound = {
+				order = 19,
+				type = "execute",
+				name = "Test expiration alert",
+				func = function()
+					WF:TestSound("expire")
 				end,
 			},
 		},
@@ -1248,6 +1412,89 @@ function WF:SetThreshold(key, value)
 	return true
 end
 
+function WF:GetSoundPath(key)
+	self:InitializeDB()
+	if not SOUND_TYPE_LABELS[key] then
+		return nil
+	end
+
+	return self.db.sounds[key] or ""
+end
+
+function WF:GetSoundPresetKey(key)
+	local path = self:GetSoundPath(key)
+	if path == nil then
+		return nil
+	end
+
+	return SOUND_PRESETS_BY_PATH[string.lower(path)] or "custom"
+end
+
+function WF:GetSoundDisplay(key)
+	local preset = self:GetSoundPresetKey(key)
+	if preset and preset ~= "custom" then
+		return SOUND_PRESET_LABELS[preset] or preset
+	end
+
+	local path = self:GetSoundPath(key)
+	if path and path ~= "" then
+		return path
+	end
+
+	return "None"
+end
+
+function WF:SetSoundPath(key, path)
+	self:InitializeDB()
+	if not SOUND_TYPE_LABELS[key] then
+		return false
+	end
+
+	self.db.sounds[key] = Trim(path)
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	return true
+end
+
+function WF:SetSoundFromPreset(key, presetKey)
+	local preset = SOUND_PRESETS_BY_KEY[presetKey]
+	if not preset then
+		return false
+	end
+
+	return self:SetSoundPath(key, preset.path)
+end
+
+function WF:ResetSound(key)
+	self:InitializeDB()
+	if not SOUND_TYPE_LABELS[key] then
+		return false
+	end
+
+	self.db.sounds[key] = DEFAULTS.sounds[key]
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	return true
+end
+
+function WF:PlayConfiguredSound(key)
+	local path = self:GetSoundPath(key)
+	if not path or path == "" then
+		return
+	end
+
+	pcall(PlaySoundFile, path)
+end
+
+function WF:TestSound(key)
+	if not SOUND_TYPE_LABELS[key] then
+		return false
+	end
+
+	self:PlayConfiguredSound(key)
+	return true
+end
+
 function WF:SetCurseMode(mode)
 	self:InitializeDB()
 	if not CURSE_MODE_LABELS[mode] then
@@ -1436,7 +1683,7 @@ function WF:PlayAlert()
 	end
 
 	self.lastSoundAt = now
-	PlaySoundFile(ALERT_SOUND)
+	self:PlayConfiguredSound("alert")
 end
 
 function WF:PlayExpireAlert()
@@ -1446,7 +1693,7 @@ function WF:PlayExpireAlert()
 	end
 
 	self.lastExpireSoundAt = now
-	PlaySoundFile(EXPIRE_SOUND)
+	self:PlayConfiguredSound("expire")
 end
 
 function WF:Flash()
@@ -1801,6 +2048,120 @@ function WF:InitializeCurseModeDropDown()
 	end
 end
 
+function WF:InitializeSoundDropDown(soundKey)
+	local selected = self:GetSoundPresetKey(soundKey)
+
+	for _, preset in ipairs(SOUND_PRESETS) do
+		local info = UIDropDownMenu_CreateInfo()
+		info.text = preset.label
+		info.value = preset.key
+		info.checked = selected == preset.key
+		info.func = function(button)
+			WF:SetSoundFromPreset(soundKey, button.value)
+		end
+		UIDropDownMenu_AddButton(info)
+	end
+
+	local custom = UIDropDownMenu_CreateInfo()
+	custom.text = SOUND_PRESET_LABELS.custom
+	custom.value = "custom"
+	custom.checked = selected == "custom"
+	custom.func = function()
+	end
+	UIDropDownMenu_AddButton(custom)
+end
+
+function WF:CreateSoundPathBox(parent, soundType, x, y)
+	local name = "WarlocksFriend" .. soundType.key .. "SoundPathEditBox"
+	local editBox = CreateFrame("EditBox", name, parent, "InputBoxTemplate")
+	editBox:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+	editBox:SetWidth(430)
+	editBox:SetHeight(20)
+	editBox:SetAutoFocus(false)
+	editBox.soundKey = soundType.key
+	editBox.tooltipText = "A sound file path, or empty for no sound."
+	editBox:SetScript("OnEnterPressed", function(self)
+		WF:SetSoundPath(self.soundKey, self:GetText())
+		self:ClearFocus()
+	end)
+	editBox:SetScript("OnEscapePressed", function(self)
+		self:SetText(WF:GetSoundPath(self.soundKey) or "")
+		self:ClearFocus()
+	end)
+	editBox:SetScript("OnEditFocusLost", function(self)
+		if not WF.refreshingOptions then
+			WF:SetSoundPath(self.soundKey, self:GetText())
+		end
+	end)
+
+	return editBox
+end
+
+function WF:CreateSoundOptionsPanel()
+	if self.soundOptionsPanel then
+		return
+	end
+
+	local panel = CreateFrame("Frame", "WarlocksFriendSoundOptionsPanel", UIParent)
+	panel.name = "Sounds"
+	panel.parent = "WarlocksFriend"
+	panel.soundRows = {}
+
+	self:CreateLabel(panel, "WarlocksFriend Sounds", 16, -16, "GameFontNormalLarge")
+	self:CreateLabel(panel, "Choose presets or enter a custom sound file path.", 16, -42, "GameFontHighlightSmall")
+
+	local y = -82
+	for _, soundType in ipairs(SOUND_TYPES) do
+		local soundKey = soundType.key
+		local row = {}
+		panel.soundRows[soundKey] = row
+
+		self:CreateLabel(panel, soundType.label, 16, y)
+
+		local dropDown = CreateFrame("Frame", "WarlocksFriend" .. soundKey .. "SoundDropDown", panel, "UIDropDownMenuTemplate")
+		dropDown:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, y - 20)
+		UIDropDownMenu_SetWidth(dropDown, 220)
+		UIDropDownMenu_Initialize(dropDown, function()
+			WF:InitializeSoundDropDown(soundKey)
+		end)
+		row.dropDown = dropDown
+
+		self:CreateLabel(panel, "Path", 16, y - 72, "GameFontHighlightSmall")
+		row.pathBox = self:CreateSoundPathBox(panel, soundType, 20, y - 96)
+
+		local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+		test:SetWidth(64)
+		test:SetHeight(22)
+		test:SetPoint("TOPLEFT", panel, "TOPLEFT", 470, y - 96)
+		test:SetText("Test")
+		test:SetScript("OnClick", function()
+			WF:SetSoundPath(soundKey, row.pathBox:GetText())
+			WF:TestSound(soundKey)
+		end)
+		row.test = test
+
+		local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+		reset:SetWidth(64)
+		reset:SetHeight(22)
+		reset:SetPoint("TOPLEFT", panel, "TOPLEFT", 540, y - 96)
+		reset:SetText("Reset")
+		reset:SetScript("OnClick", function()
+			WF:ResetSound(soundKey)
+			WF:TestSound(soundKey)
+		end)
+		row.reset = reset
+
+		y = y - 150
+	end
+
+	panel:SetScript("OnShow", function()
+		WF:RefreshOptions()
+	end)
+
+	InterfaceOptions_AddCategory(panel)
+	self.soundOptionsPanel = panel
+end
+
 function WF:CreateOptionsPanel()
 	if self.optionsPanel then
 		return
@@ -1975,6 +2336,20 @@ function WF:CreateOptionsPanel()
 		WF:ResetPosition()
 	end)
 
+	local sounds = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	sounds:SetWidth(110)
+	sounds:SetHeight(22)
+	sounds:SetPoint("TOPLEFT", panel, "TOPLEFT", 136, y - 4)
+	sounds:SetText("Sounds")
+	sounds:SetScript("OnClick", function()
+		if not WF.soundOptionsPanel then
+			WF:CreateSoundOptionsPanel()
+		end
+		if InterfaceOptionsFrame_OpenToCategory then
+			InterfaceOptionsFrame_OpenToCategory(WF.soundOptionsPanel)
+		end
+	end)
+
 	panel:SetScript("OnShow", function()
 		WF:RefreshOptions()
 		WF:ShowMoverPreview()
@@ -1982,6 +2357,7 @@ function WF:CreateOptionsPanel()
 
 	InterfaceOptions_AddCategory(panel)
 	self.optionsPanel = panel
+	self:CreateSoundOptionsPanel()
 	self:RefreshOptions()
 end
 
@@ -2027,6 +2403,19 @@ function WF:RefreshOptions()
 		slider:SetValue(value)
 	end
 
+	if self.soundOptionsPanel and self.soundOptionsPanel.soundRows then
+		for _, soundType in ipairs(SOUND_TYPES) do
+			local row = self.soundOptionsPanel.soundRows[soundType.key]
+			if row then
+				local preset = self:GetSoundPresetKey(soundType.key) or "custom"
+				local presetLabel = SOUND_PRESET_LABELS[preset] or SOUND_PRESET_LABELS.custom
+				UIDropDownMenu_SetSelectedValue(row.dropDown, preset)
+				UIDropDownMenu_SetText(row.dropDown, presetLabel)
+				row.pathBox:SetText(self:GetSoundPath(soundType.key) or "")
+			end
+		end
+	end
+
 	self.refreshingOptions = false
 end
 
@@ -2048,6 +2437,9 @@ function WF:PrintHelp()
 	self:Print("/wf curse groupscan on|off")
 	self:Print("/wf curse warlock on|off")
 	self:Print("/wf curse agonymobs on|off")
+	self:Print("/wf sound alert|expire <preset|path>")
+	self:Print("/wf sound test alert|expire")
+	self:Print("/wf sound reset alert|expire")
 	self:Print("/wf threshold lifetap|corruption|immolate|incinerate <seconds>")
 	self:Print("/wf background on|off")
 	self:Print("/wf border on|off")
@@ -2071,6 +2463,9 @@ function WF:PrintStatus()
 	self:Print("Curse group scan: " .. (self.db.curse.useGroupScan and "enabled" or "disabled"))
 	self:Print("Other Warlock coverage: " .. (self.db.curse.assumeWarlockCoverage and "assumed" or "ignored"))
 	self:Print("Agony on simple mobs: " .. (self.db.curse.preferAgonyOnMobs and "enabled" or "disabled"))
+	for _, soundType in ipairs(SOUND_TYPES) do
+		self:Print(soundType.label .. ": " .. self:GetSoundDisplay(soundType.key))
+	end
 	local expected, source, unitName = self:GetExpectedMagicVulnerabilityCoverage()
 	if expected then
 		self:Print("Expected Elements coverage: " .. source .. (unitName and (" from " .. unitName) or ""))
@@ -2147,6 +2542,42 @@ function WF:HandleSlash(input)
 		else
 			self:Print("Usage: /wf curse auto | elements | doom | agony | off")
 			self:Print("Extra: /wf curse groupscan|warlock|agonymobs on|off")
+		end
+	elseif command == "sound" or command == "sounds" then
+		local soundCommand, soundValue = string.match(rest, "^(%S*)%s*(.-)%s*$")
+		soundCommand = string.lower(soundCommand or "")
+		soundValue = Trim(soundValue)
+
+		if soundCommand == "test" then
+			local key = SOUND_TYPE_ALIASES[string.lower(soundValue)]
+			if key and self:TestSound(key) then
+				self:Print("Testing " .. SOUND_TYPE_LABELS[key] .. ".")
+			else
+				self:Print("Usage: /wf sound test alert|expire")
+			end
+		elseif soundCommand == "reset" then
+			local key = SOUND_TYPE_ALIASES[string.lower(soundValue)]
+			if key and self:ResetSound(key) then
+				self:Print(SOUND_TYPE_LABELS[key] .. " reset to " .. self:GetSoundDisplay(key) .. ".")
+			else
+				self:Print("Usage: /wf sound reset alert|expire")
+			end
+		else
+			local key = SOUND_TYPE_ALIASES[soundCommand]
+			if not key or soundValue == "" then
+				self:Print("Usage: /wf sound alert|expire <preset|path>")
+				self:Print("Presets: none, raidwarning, alarm3, levelup, wardrum, scourgehorn")
+			else
+				local normalizedSoundValue = string.lower(soundValue)
+				local presetKey = SOUND_PRESET_ALIASES[normalizedSoundValue]
+					or (SOUND_PRESETS_BY_KEY[normalizedSoundValue] and normalizedSoundValue)
+				if presetKey then
+					self:SetSoundFromPreset(key, presetKey)
+				else
+					self:SetSoundPath(key, soundValue)
+				end
+				self:Print(SOUND_TYPE_LABELS[key] .. " set to " .. self:GetSoundDisplay(key) .. ".")
+			end
 		end
 	elseif command == "threshold" or command == "lead" then
 		local aura, seconds = string.match(rest, "^(%S+)%s+(%S+)$")

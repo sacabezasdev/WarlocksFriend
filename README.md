@@ -32,6 +32,7 @@ The addon stays silent for non-warlocks and for warlocks without Metamorphosis.
   - Immolate debuff
   - Incinerate debuff, if the server exposes Incinerate as a target aura
 - Movable or locked alert frame.
+- Configurable sounds for general alerts and expiration alerts.
 - Optional ElvUI integration when ElvUI is loaded.
 
 ## Settings
@@ -64,6 +65,10 @@ Available settings:
   - Use group scan
   - Treat another Warlock as assigned to Curse of the Elements
   - Prefer Curse of Agony on simple mobs
+- Sounds:
+  - General alert sound
+  - Expiration alert sound
+  - Presets, custom file paths, test buttons, and reset buttons
 - ElvUI integration, when available:
   - Use ElvUI style
   - Use ElvUI mover
@@ -118,6 +123,28 @@ Curse recommendation:
 /wf curse warlock off
 /wf curse agonymobs on
 /wf curse agonymobs off
+```
+
+Sounds:
+
+```text
+/wf sound alert <preset|path>
+/wf sound expire <preset|path>
+/wf sound test alert
+/wf sound test expire
+/wf sound reset alert
+/wf sound reset expire
+```
+
+Available sound presets:
+
+```text
+none
+raidwarning
+alarm3
+levelup
+wardrum
+scourgehorn
 ```
 
 Expiration warning thresholds:
@@ -186,5 +213,11 @@ UnitLevel(unit) == -1
 In normal Wrath gameplay, Incinerate is a direct damage spell rather than a target debuff. WarlocksFriend still includes an Incinerate expiration setting because some private servers may expose custom aura behavior. If no Incinerate aura exists on the target, that warning simply will not fire.
 
 Curse recommendations use the current target's debuffs first. Group and raid scanning is a prediction layer for Balance Druids with Earth and Moon, Unholy Death Knights with Ebon Plaguebringer, and optionally another Warlock assigned to Curse of the Elements. Talent inspection is asynchronous in Wrath, so it may take a few seconds to learn nearby group members.
+
+Custom sound paths should point to files the WoW client can load, for example:
+
+```text
+Interface\AddOns\WarlocksFriend\Sounds\my-alert.ogg
+```
 
 The addon does not cast spells or create protected action buttons. It only displays passive alerts.
