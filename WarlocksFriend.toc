@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: WarlocksFriend
-## Notes: Combat alerts for Demonology Warlock filler spells, DoTs, and Life Tap.
+## Notes: Combat alerts for Demonology Warlock filler spells, curses, DoTs, and Life Tap.
 ## Author: Santiago
-## Version: 0.3.0
+## Version: 0.4.0
 ## OptionalDeps: ElvUI
 ## SavedVariablesPerCharacter: WarlocksFriendDB
 

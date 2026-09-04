@@ -9,6 +9,11 @@ local EXPIRE_SOUND_COOLDOWN = 1.00
 local FLASH_DURATION = 0.35
 local MAX_THRESHOLD = 10
 local ELVUI_MOVER_NAME = "WarlocksFriendAlertMover"
+local GROUP_SCAN_INTERVAL = 5.00
+local INSPECT_INTERVAL = 2.00
+local INSPECT_TIMEOUT = 8.00
+local INSPECT_CACHE_TTL = 300.00
+local EXPECTED_COVERAGE_GRACE = 3.00
 
 local ALERT_SOUND = "Sound\\Interface\\RaidWarning.wav"
 local EXPIRE_SOUND = "Sound\\Interface\\AlarmClockWarning3.wav"
@@ -35,6 +40,12 @@ local DEFAULTS = {
 		useElvUIStyle = false,
 		useElvUIMover = false,
 	},
+	curse = {
+		mode = "auto",
+		useGroupScan = true,
+		assumeWarlockCoverage = false,
+		preferAgonyOnMobs = true,
+	},
 }
 
 local ACTIVE_MODES = {
@@ -55,6 +66,21 @@ local THRESHOLD_OPTIONS = {
 	{ key = "immolate", command = "immolate", label = "Immolate debuff" },
 	{ key = "incinerate", command = "incinerate", label = "Incinerate debuff" },
 }
+
+local CURSE_MODES = {
+	{ key = "auto", label = "Auto" },
+	{ key = "elements", label = "Always Curse of the Elements" },
+	{ key = "doom", label = "Always Curse of Doom" },
+	{ key = "agony", label = "Always Curse of Agony" },
+	{ key = "off", label = "Disabled" },
+}
+
+local CURSE_MODE_LABELS = {}
+local CURSE_MODE_VALUES = {}
+for _, mode in ipairs(CURSE_MODES) do
+	CURSE_MODE_LABELS[mode.key] = mode.label
+	CURSE_MODE_VALUES[mode.key] = mode.label
+end
 
 local THRESHOLD_LABELS = {}
 for _, option in ipairs(THRESHOLD_OPTIONS) do
@@ -94,6 +120,28 @@ local ACTIVE_MODE_ALIASES = {
 	focus = "focus_boss",
 	focusboss = "focus_boss",
 	focus_boss = "focus_boss",
+}
+
+local CURSE_MODE_ALIASES = {
+	auto = "auto",
+	smart = "auto",
+	elements = "elements",
+	element = "elements",
+	coe = "elements",
+	curseelements = "elements",
+	curseofelements = "elements",
+	doom = "doom",
+	cod = "doom",
+	cursedoom = "doom",
+	curseofdoom = "doom",
+	agony = "agony",
+	coa = "agony",
+	curseagony = "agony",
+	curseofagony = "agony",
+	off = "off",
+	none = "off",
+	disabled = "off",
+	disable = "off",
 }
 
 local BOOLEAN_ALIASES = {
@@ -137,11 +185,36 @@ local SPELLS = {
 
 	immolate = Spell(348, "Immolate", "Interface\\Icons\\Spell_Fire_Immolation", { 1.00, 0.36, 0.16 }),
 	corruption = Spell(172, "Corruption", "Interface\\Icons\\Spell_Shadow_AbominationExplosion", { 0.74, 0.42, 1.00 }),
+	curseElements = Spell(47865, "Curse of the Elements", "Interface\\Icons\\Spell_Shadow_ChillTouch", { 0.36, 0.72, 1.00 }),
+	curseDoom = Spell(47867, "Curse of Doom", "Interface\\Icons\\Spell_Shadow_AuraOfDarkness", { 0.84, 0.46, 1.00 }),
+	curseAgony = Spell(47864, "Curse of Agony", "Interface\\Icons\\Spell_Shadow_CurseOfSargeras", { 0.96, 0.52, 1.00 }),
 
 	metamorphosis = Spell(47241, "Metamorphosis", "Interface\\Icons\\Spell_Shadow_DemonForm"),
 	decimation = Spell(63167, "Decimation", "Interface\\Icons\\Spell_Fire_Fireball02"),
 	moltenCore = Spell(71165, "Molten Core", "Interface\\Icons\\Ability_Warlock_MoltenCore"),
 	lifeTap = Spell(63321, "Life Tap", "Interface\\Icons\\Spell_Shadow_BurningSpirit", { 0.42, 0.86, 1.00 }),
+	earthAndMoon = Spell(60433, "Earth and Moon", "Interface\\Icons\\Ability_Druid_Eclipse", { 0.36, 0.72, 1.00 }),
+	ebonPlague = Spell(51735, "Ebon Plague", "Interface\\Icons\\Ability_Creature_Disease_03", { 0.36, 0.72, 1.00 }),
+	ebonPlaguebringer = Spell(51161, "Ebon Plaguebringer", "Interface\\Icons\\Ability_Creature_Disease_03", { 0.36, 0.72, 1.00 }),
+}
+
+local MAGIC_VULNERABILITY_DEBUFFS = {
+	{ spell = SPELLS.curseElements, source = SPELLS.curseElements.name },
+	{ spell = SPELLS.earthAndMoon, source = SPELLS.earthAndMoon.name },
+	{ spell = SPELLS.ebonPlague, source = SPELLS.ebonPlague.name },
+}
+
+local MAGIC_VULNERABILITY_TALENTS = {
+	DRUID = {
+		talent = SPELLS.earthAndMoon.name,
+		fallbackTalent = SPELLS.earthAndMoon.fallbackName,
+		source = SPELLS.earthAndMoon.name,
+	},
+	DEATHKNIGHT = {
+		talent = SPELLS.ebonPlaguebringer.name,
+		fallbackTalent = SPELLS.ebonPlaguebringer.fallbackName,
+		source = SPELLS.ebonPlaguebringer.name,
+	},
 }
 
 local function CopyDefaults(source, target)
@@ -221,6 +294,23 @@ function WF:InitializeDB()
 	end
 	if type(self.db.style.useElvUIMover) ~= "boolean" then
 		self.db.style.useElvUIMover = DEFAULTS.style.useElvUIMover
+	end
+
+	if type(self.db.curse) ~= "table" then
+		self.db.curse = {}
+	end
+	CopyDefaults(DEFAULTS.curse, self.db.curse)
+	if not CURSE_MODE_LABELS[self.db.curse.mode] then
+		self.db.curse.mode = DEFAULTS.curse.mode
+	end
+	if type(self.db.curse.useGroupScan) ~= "boolean" then
+		self.db.curse.useGroupScan = DEFAULTS.curse.useGroupScan
+	end
+	if type(self.db.curse.assumeWarlockCoverage) ~= "boolean" then
+		self.db.curse.assumeWarlockCoverage = DEFAULTS.curse.assumeWarlockCoverage
+	end
+	if type(self.db.curse.preferAgonyOnMobs) ~= "boolean" then
+		self.db.curse.preferAgonyOnMobs = DEFAULTS.curse.preferAgonyOnMobs
 	end
 end
 
@@ -316,6 +406,9 @@ function WF:ApplyTextStyle()
 
 	local justify = self.db.style.centerText and "CENTER" or "LEFT"
 	self.alertFrame.mainText:SetJustifyH(justify)
+	if self.alertFrame.curseText then
+		self.alertFrame.curseText:SetJustifyH(justify)
+	end
 
 	if self.alertFrame.warningList and self.alertFrame.warningList.warnings then
 		for _, warning in ipairs(self.alertFrame.warningList.warnings) do
@@ -523,6 +616,56 @@ function WF:RegisterElvUIOptions()
 					end
 				end,
 			},
+			curseHeader = {
+				order = 8,
+				type = "header",
+				name = "Curse Recommendation",
+			},
+			curseMode = {
+				order = 9,
+				type = "select",
+				name = "Curse mode",
+				values = CURSE_MODE_VALUES,
+				get = function()
+					return WF.db and WF.db.curse.mode
+				end,
+				set = function(_, value)
+					WF:SetCurseMode(value)
+				end,
+			},
+			useGroupScan = {
+				order = 10,
+				type = "toggle",
+				name = "Use group scan",
+				get = function()
+					return WF.db and WF.db.curse.useGroupScan
+				end,
+				set = function(_, value)
+					WF:SetCurseGroupScan(value)
+				end,
+			},
+			assumeWarlockCoverage = {
+				order = 11,
+				type = "toggle",
+				name = "Assume another Warlock covers Elements",
+				get = function()
+					return WF.db and WF.db.curse.assumeWarlockCoverage
+				end,
+				set = function(_, value)
+					WF:SetAssumeWarlockCoverage(value)
+				end,
+			},
+			preferAgonyOnMobs = {
+				order = 12,
+				type = "toggle",
+				name = "Prefer Agony on simple mobs",
+				get = function()
+					return WF.db and WF.db.curse.preferAgonyOnMobs
+				end,
+				set = function(_, value)
+					WF:SetPreferAgonyOnMobs(value)
+				end,
+			},
 		},
 	}
 end
@@ -661,6 +804,341 @@ function WF:GetFillerRecommendation()
 	return "shadowBolt", SPELLS.shadowBolt
 end
 
+function WF:GetUnitDisplayName(unit)
+	local name, realm = UnitName(unit)
+	if realm and realm ~= "" then
+		return name .. "-" .. realm
+	end
+
+	return name
+end
+
+function WF:ForEachGroupUnit(callback)
+	local raidCount = GetNumRaidMembers and GetNumRaidMembers() or 0
+	if raidCount > 0 then
+		for i = 1, raidCount do
+			callback("raid" .. i)
+		end
+		return
+	end
+
+	callback("player")
+
+	local partyCount = GetNumPartyMembers and GetNumPartyMembers() or 0
+	for i = 1, partyCount do
+		callback("party" .. i)
+	end
+end
+
+function WF:FindGroupUnitByGUID(guid)
+	if not guid then
+		return nil
+	end
+
+	local foundUnit
+	self:ForEachGroupUnit(function(unit)
+		if not foundUnit and UnitGUID(unit) == guid then
+			foundUnit = unit
+		end
+	end)
+
+	return foundUnit
+end
+
+function WF:UnitCanBeInspected(unit)
+	return UnitExists(unit)
+		and not UnitIsUnit(unit, "player")
+		and UnitIsConnected(unit)
+		and UnitIsVisible(unit)
+		and not UnitCanAttack("player", unit)
+		and CanInspect
+		and CanInspect(unit)
+end
+
+function WF:UnitHasMagicVulnerabilityTalent(unit, inspect)
+	local _, class = UnitClass(unit)
+	local talent = class and MAGIC_VULNERABILITY_TALENTS[class]
+	if not talent then
+		return false
+	end
+
+	local numTabs = GetNumTalentTabs and GetNumTalentTabs(inspect) or 3
+	for tab = 1, numTabs do
+		local numTalents = GetNumTalents and GetNumTalents(tab, inspect) or 0
+		for talentIndex = 1, numTalents do
+			local name, _, _, _, currentRank = GetTalentInfo(tab, talentIndex, inspect)
+			if currentRank and currentRank > 0 and (name == talent.talent or name == talent.fallbackTalent) then
+				return true, talent.source
+			end
+		end
+	end
+
+	return false
+end
+
+function WF:QueueInspect(unit)
+	if not self.inspectQueue then
+		self.inspectQueue = {}
+	end
+	if not self.inspectQueued then
+		self.inspectQueued = {}
+	end
+
+	local guid = UnitGUID(unit)
+	if not guid or self.inspectQueued[guid] or (self.inspectPending and self.inspectPending.guid == guid) then
+		return
+	end
+
+	table.insert(self.inspectQueue, {
+		unit = unit,
+		guid = guid,
+	})
+	self.inspectQueued[guid] = true
+end
+
+function WF:RequestNextInspect()
+	if not self.db or not self.db.curse.useGroupScan or not NotifyInspect then
+		return
+	end
+
+	local now = GetTime()
+	if self.inspectPending then
+		if now - self.inspectPending.requestedAt <= INSPECT_TIMEOUT then
+			return
+		end
+
+		self.inspectPending = nil
+	end
+
+	if self.nextInspectAt and now < self.nextInspectAt then
+		return
+	end
+
+	if InspectFrame and InspectFrame:IsShown() then
+		return
+	end
+
+	while self.inspectQueue and #self.inspectQueue > 0 do
+		local item = table.remove(self.inspectQueue, 1)
+		self.inspectQueued[item.guid] = nil
+		local unit = UnitGUID(item.unit) == item.guid and item.unit or self:FindGroupUnitByGUID(item.guid)
+
+		if unit and self:UnitCanBeInspected(unit) then
+			self.inspectPending = {
+				unit = unit,
+				guid = item.guid,
+				requestedAt = now,
+			}
+			self.nextInspectAt = now + INSPECT_INTERVAL
+			NotifyInspect(unit)
+			return
+		end
+	end
+end
+
+function WF:HandleInspectTalentReady(unit)
+	local pending = self.inspectPending
+	if not pending then
+		return
+	end
+
+	local inspectedUnit = unit and UnitExists(unit) and unit or pending.unit
+	if not inspectedUnit or UnitGUID(inspectedUnit) ~= pending.guid then
+		inspectedUnit = self:FindGroupUnitByGUID(pending.guid)
+	end
+
+	local now = GetTime()
+	if inspectedUnit then
+		local hasMagicVulnerability, source = self:UnitHasMagicVulnerabilityTalent(inspectedUnit, true)
+		self.inspectCache[pending.guid] = {
+			hasMagicVulnerability = hasMagicVulnerability,
+			source = source,
+			unitName = self:GetUnitDisplayName(inspectedUnit),
+			updatedAt = now,
+		}
+	end
+
+	self.inspectPending = nil
+	if ClearInspectPlayer then
+		ClearInspectPlayer()
+	end
+
+	self:RefreshGroupCoverage(true)
+	self:RequestNextInspect()
+end
+
+function WF:MarkExpectedMagicVulnerability(source, unitName)
+	self.groupCoverage.hasMagicVulnerability = true
+	self.groupCoverage.source = source
+	self.groupCoverage.unitName = unitName
+end
+
+function WF:RefreshGroupCoverage(force)
+	if not self.db then
+		return
+	end
+
+	local now = GetTime()
+	if not force and self.nextGroupScanAt and now < self.nextGroupScanAt then
+		return
+	end
+
+	self.nextGroupScanAt = now + GROUP_SCAN_INTERVAL
+	self.groupCoverage = {
+		hasMagicVulnerability = false,
+		source = nil,
+		unitName = nil,
+		pending = false,
+		updatedAt = now,
+	}
+
+	if not self.db.curse.useGroupScan then
+		return
+	end
+
+	self.inspectQueue = {}
+	self.inspectQueued = {}
+
+	self:ForEachGroupUnit(function(unit)
+		if self.groupCoverage.hasMagicVulnerability or not UnitExists(unit) or UnitIsUnit(unit, "player") then
+			return
+		end
+		if not UnitIsConnected(unit)
+			or (UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit))
+			or (not UnitIsDeadOrGhost and UnitIsDead(unit)) then
+			return
+		end
+
+		local _, class = UnitClass(unit)
+		if class == "WARLOCK" and self.db.curse.assumeWarlockCoverage then
+			self:MarkExpectedMagicVulnerability(SPELLS.curseElements.name, self:GetUnitDisplayName(unit))
+			return
+		end
+
+		if not MAGIC_VULNERABILITY_TALENTS[class] then
+			return
+		end
+
+		local guid = UnitGUID(unit)
+		local cached = guid and self.inspectCache[guid]
+		if cached and now - cached.updatedAt <= INSPECT_CACHE_TTL then
+			if cached.hasMagicVulnerability then
+				self:MarkExpectedMagicVulnerability(cached.source, cached.unitName)
+			end
+			return
+		end
+
+		if self:UnitCanBeInspected(unit) then
+			self.groupCoverage.pending = true
+			self:QueueInspect(unit)
+		end
+	end)
+
+	self:RequestNextInspect()
+end
+
+function WF:GetExpectedMagicVulnerabilityCoverage()
+	self:RefreshGroupCoverage(false)
+	self:RequestNextInspect()
+
+	if self.groupCoverage and self.groupCoverage.hasMagicVulnerability then
+		return true, self.groupCoverage.source, self.groupCoverage.unitName
+	end
+
+	return false
+end
+
+function WF:GetTargetMagicVulnerabilityCoverage()
+	local coverage = {
+		found = false,
+		external = false,
+		playerElements = false,
+		source = nil,
+	}
+
+	if not UnitExists("target") then
+		return coverage
+	end
+
+	for i = 1, 40 do
+		local name, _, _, _, _, _, _, unitCaster, _, _, spellId = UnitAura("target", i, "HARMFUL")
+		if not name then
+			return coverage
+		end
+
+		for _, debuff in ipairs(MAGIC_VULNERABILITY_DEBUFFS) do
+			if AuraMatches(name, spellId, debuff.spell) then
+				coverage.found = true
+				coverage.source = debuff.source
+
+				if debuff.spell == SPELLS.curseElements and unitCaster == "player" then
+					coverage.playerElements = true
+				elseif debuff.spell == SPELLS.curseElements and not unitCaster then
+					coverage.playerElements = true
+				else
+					coverage.external = true
+				end
+
+				if coverage.external then
+					return coverage
+				end
+			end
+		end
+	end
+
+	return coverage
+end
+
+function WF:GetDamageCurseRecommendation()
+	if UnitIsPlayer and UnitIsPlayer("target") then
+		return "agony", SPELLS.curseAgony
+	end
+
+	if self.db.curse.preferAgonyOnMobs and not self:IsBossUnit("target") then
+		return "agony", SPELLS.curseAgony
+	end
+
+	return "doom", SPELLS.curseDoom
+end
+
+function WF:GetDoomCurseRecommendation()
+	if UnitIsPlayer and UnitIsPlayer("target") then
+		return "agony", SPELLS.curseAgony
+	end
+
+	return "doom", SPELLS.curseDoom
+end
+
+function WF:GetCurseRecommendation()
+	if not self.db or not self.db.curse or self.db.curse.mode == "off" or not self:HasHostileTarget() then
+		return nil
+	end
+
+	local mode = self.db.curse.mode
+	if mode == "elements" then
+		return "elements", SPELLS.curseElements
+	end
+	if mode == "agony" then
+		return "agony", SPELLS.curseAgony
+	end
+	if mode == "doom" then
+		return self:GetDoomCurseRecommendation()
+	end
+
+	local activeCoverage = self:GetTargetMagicVulnerabilityCoverage()
+	if activeCoverage.external then
+		return self:GetDamageCurseRecommendation()
+	end
+
+	local expectedCoverage = self:GetExpectedMagicVulnerabilityCoverage()
+	local targetAge = self.targetSeenAt and (GetTime() - self.targetSeenAt) or EXPECTED_COVERAGE_GRACE
+	if expectedCoverage and not activeCoverage.playerElements and targetAge <= EXPECTED_COVERAGE_GRACE then
+		return self:GetDamageCurseRecommendation()
+	end
+
+	return "elements", SPELLS.curseElements
+end
+
 function WF:CreateWarning(parent, index)
 	local warning = CreateFrame("Frame", nil, parent)
 	warning:SetWidth(310)
@@ -770,6 +1248,45 @@ function WF:SetThreshold(key, value)
 	return true
 end
 
+function WF:SetCurseMode(mode)
+	self:InitializeDB()
+	if not CURSE_MODE_LABELS[mode] then
+		return false
+	end
+
+	self.db.curse.mode = mode
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	self:UpdateAlerts()
+	return true
+end
+
+function WF:SetCurseGroupScan(useGroupScan)
+	self:InitializeDB()
+	self.db.curse.useGroupScan = useGroupScan and true or false
+	self:RefreshGroupCoverage(true)
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	self:UpdateAlerts()
+end
+
+function WF:SetAssumeWarlockCoverage(assumeWarlockCoverage)
+	self:InitializeDB()
+	self.db.curse.assumeWarlockCoverage = assumeWarlockCoverage and true or false
+	self:RefreshGroupCoverage(true)
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	self:UpdateAlerts()
+end
+
+function WF:SetPreferAgonyOnMobs(preferAgonyOnMobs)
+	self:InitializeDB()
+	self.db.curse.preferAgonyOnMobs = preferAgonyOnMobs and true or false
+	self:RefreshOptions()
+	self:RefreshElvUIOptions()
+	self:UpdateAlerts()
+end
+
 function WF:ResetPosition()
 	self:InitializeDB()
 	self.db.position.point = DEFAULTS.position.point
@@ -838,6 +1355,16 @@ function WF:CreateUI()
 	frame.mainText:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
 	frame.mainText:SetJustifyH("LEFT")
 
+	frame.curseIcon = frame:CreateTexture(nil, "ARTWORK")
+	frame.curseIcon:SetWidth(24)
+	frame.curseIcon:SetHeight(24)
+	frame.curseIcon:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -62)
+
+	frame.curseText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	frame.curseText:SetPoint("LEFT", frame.curseIcon, "RIGHT", 8, 0)
+	frame.curseText:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
+	frame.curseText:SetJustifyH("LEFT")
+
 	frame.warningList = CreateFrame("Frame", nil, frame)
 	frame.warningList:SetWidth(310)
 	frame.warningList:SetPoint("LEFT", frame, "LEFT", 16, 0)
@@ -872,7 +1399,9 @@ end
 
 function WF:HideAlerts()
 	self.currentFiller = nil
+	self.currentCurse = nil
 	self.lastTargetGuid = nil
+	self.targetSeenAt = nil
 	self.warningState = {}
 	self.expiringState = {}
 
@@ -890,6 +1419,8 @@ end
 function WF:ResetTargetWarnings(targetGuid)
 	if self.lastTargetGuid ~= targetGuid then
 		self.lastTargetGuid = targetGuid
+		self.targetSeenAt = targetGuid and GetTime() or nil
+		self.currentCurse = nil
 		self.warningState.missing_immolate = nil
 		self.warningState.missing_corruption = nil
 		self.expiringState.immolate = nil
@@ -928,15 +1459,25 @@ function WF:Flash()
 	self.alertFrame.flash:Show()
 end
 
-function WF:Render(recommendation, warnings)
+function WF:Render(recommendation, warnings, curseRecommendation)
 	local frame = self.alertFrame
 	local warningCount = #warnings
 	local hasRecommendation = recommendation ~= nil
-	local baseHeight = hasRecommendation and 76 or 24
+	local hasCurseRecommendation = curseRecommendation ~= nil
+	local baseHeight
+	if hasRecommendation and hasCurseRecommendation then
+		baseHeight = 106
+	elseif hasRecommendation then
+		baseHeight = 76
+	elseif hasCurseRecommendation then
+		baseHeight = 54
+	else
+		baseHeight = 24
+	end
 	local height = baseHeight + (warningCount * 22)
 	local centerText = self.db and self.db.style.centerText
 
-	if not hasRecommendation and warningCount == 0 then
+	if not hasRecommendation and not hasCurseRecommendation and warningCount == 0 then
 		frame:Hide()
 		return
 	end
@@ -962,12 +1503,46 @@ function WF:Render(recommendation, warnings)
 		frame.mainText:SetJustifyH(centerText and "CENTER" or "LEFT")
 		frame.mainText:Show()
 		frame.warningList:ClearAllPoints()
-		frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -62)
+		if hasCurseRecommendation then
+			frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -92)
+		else
+			frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -62)
+		end
 	else
 		frame.mainIcon:Hide()
 		frame.mainText:Hide()
+	end
+
+	if hasCurseRecommendation then
+		local color = curseRecommendation.color
+		frame.curseIcon:SetTexture(curseRecommendation.icon)
+		frame.curseIcon:ClearAllPoints()
+		frame.curseIcon:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, hasRecommendation and -62 or -16)
+		frame.curseIcon:Show()
+		frame.curseText:ClearAllPoints()
+		if centerText then
+			frame.curseText:SetPoint("TOPLEFT", frame, "TOPLEFT", 48, hasRecommendation and -65 or -19)
+			frame.curseText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, hasRecommendation and -65 or -19)
+		else
+			frame.curseText:SetPoint("LEFT", frame.curseIcon, "RIGHT", 8, 0)
+			frame.curseText:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
+		end
+		frame.curseText:SetText("Curse: " .. curseRecommendation.name)
+		frame.curseText:SetTextColor(color[1], color[2], color[3])
+		frame.curseText:SetJustifyH(centerText and "CENTER" or "LEFT")
+		frame.curseText:Show()
+	else
+		frame.curseIcon:Hide()
+		frame.curseText:Hide()
+	end
+
+	if not hasRecommendation then
 		frame.warningList:ClearAllPoints()
-		frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -13)
+		if hasCurseRecommendation then
+			frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -46)
+		else
+			frame.warningList:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -13)
+		end
 	end
 
 	frame.warningList:SetHeight(math.max(1, warningCount * 22))
@@ -1067,6 +1642,18 @@ function WF:UpdateAlerts()
 	end
 	self.currentFiller = fillerKey
 
+	local curseKey, curseSpell
+	if hasTarget then
+		curseKey, curseSpell = self:GetCurseRecommendation()
+	end
+
+	if curseKey and self.currentCurse and curseKey ~= self.currentCurse then
+		self.shouldPlayAlert = true
+	elseif curseKey and not self.currentCurse and curseKey == "elements" then
+		self.shouldPlayAlert = true
+	end
+	self.currentCurse = curseKey
+
 	local warnings = {}
 	local foundLifeTap = self:FindAura("player", SPELLS.lifeTap, "HELPFUL")
 	local lifeTapRemaining = self:GetAuraRemaining("player", SPELLS.lifeTap, "HELPFUL")
@@ -1105,7 +1692,7 @@ function WF:UpdateAlerts()
 		self.expiringState.lifeTap = nil
 	end
 
-	self:Render(fillerSpell, warnings)
+	self:Render(fillerSpell, warnings, curseSpell)
 
 	if self.shouldPlayAlert then
 		self:PlayAlert()
@@ -1196,6 +1783,19 @@ function WF:InitializeModeDropDown()
 		info.checked = self.db.activeMode == mode.key
 		info.func = function(button)
 			WF:SetActiveMode(button.value)
+		end
+		UIDropDownMenu_AddButton(info)
+	end
+end
+
+function WF:InitializeCurseModeDropDown()
+	for _, mode in ipairs(CURSE_MODES) do
+		local info = UIDropDownMenu_CreateInfo()
+		info.text = mode.label
+		info.value = mode.key
+		info.checked = self.db.curse.mode == mode.key
+		info.func = function(button)
+			WF:SetCurseMode(button.value)
 		end
 		UIDropDownMenu_AddButton(info)
 	end
@@ -1305,6 +1905,50 @@ function WF:CreateOptionsPanel()
 	end)
 	panel.elvUIAnchors = elvUIAnchors
 
+	self:CreateLabel(panel, "Curse recommendation", 330, -336)
+	local curseModeDropDown = CreateFrame("Frame", "WarlocksFriendCurseModeDropDown", panel, "UIDropDownMenuTemplate")
+	curseModeDropDown:SetPoint("TOPLEFT", panel, "TOPLEFT", 322, -356)
+	UIDropDownMenu_SetWidth(curseModeDropDown, 220)
+	UIDropDownMenu_Initialize(curseModeDropDown, function()
+		WF:InitializeCurseModeDropDown()
+	end)
+	panel.curseModeDropDown = curseModeDropDown
+
+	panel.curseChecks = {}
+	panel.curseChecks.useGroupScan = self:CreateOptionCheck(
+		panel,
+		"WarlocksFriendUseGroupScanCheckButton",
+		"Use group scan",
+		330,
+		-404,
+		function(value)
+			WF:SetCurseGroupScan(value)
+		end,
+		"Use nearby party and raid talents to predict whether Elements should be covered."
+	)
+	panel.curseChecks.assumeWarlockCoverage = self:CreateOptionCheck(
+		panel,
+		"WarlocksFriendAssumeWarlockCoverageCheckButton",
+		"Other Warlock covers Elements",
+		330,
+		-428,
+		function(value)
+			WF:SetAssumeWarlockCoverage(value)
+		end,
+		"Treat another Warlock in the group as assigned to Curse of the Elements."
+	)
+	panel.curseChecks.preferAgonyOnMobs = self:CreateOptionCheck(
+		panel,
+		"WarlocksFriendPreferAgonyOnMobsCheckButton",
+		"Prefer Agony on simple mobs",
+		330,
+		-452,
+		function(value)
+			WF:SetPreferAgonyOnMobs(value)
+		end,
+		"Use Curse of Agony instead of Curse of Doom for non-boss targets."
+	)
+
 	self:CreateLabel(panel, "Active mode", 16, -116)
 	local modeDropDown = CreateFrame("Frame", "WarlocksFriendActiveModeDropDown", panel, "UIDropDownMenuTemplate")
 	modeDropDown:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -136)
@@ -1353,6 +1997,9 @@ function WF:RefreshOptions()
 	self.optionsPanel.styleChecks.centerText:SetChecked(self.db.style.centerText)
 	self.optionsPanel.styleChecks.useElvUIStyle:SetChecked(self.db.style.useElvUIStyle)
 	self.optionsPanel.styleChecks.useElvUIMover:SetChecked(self.db.style.useElvUIMover)
+	self.optionsPanel.curseChecks.useGroupScan:SetChecked(self.db.curse.useGroupScan)
+	self.optionsPanel.curseChecks.assumeWarlockCoverage:SetChecked(self.db.curse.assumeWarlockCoverage)
+	self.optionsPanel.curseChecks.preferAgonyOnMobs:SetChecked(self.db.curse.preferAgonyOnMobs)
 
 	if self:IsElvUIAvailable() then
 		self.optionsPanel.elvUIStatus:SetText("|cff00ff00ElvUI detected.|r")
@@ -1368,6 +2015,8 @@ function WF:RefreshOptions()
 
 	UIDropDownMenu_SetSelectedValue(self.optionsPanel.modeDropDown, self.db.activeMode)
 	UIDropDownMenu_SetText(self.optionsPanel.modeDropDown, ACTIVE_MODE_LABELS[self.db.activeMode])
+	UIDropDownMenu_SetSelectedValue(self.optionsPanel.curseModeDropDown, self.db.curse.mode)
+	UIDropDownMenu_SetText(self.optionsPanel.curseModeDropDown, CURSE_MODE_LABELS[self.db.curse.mode])
 
 	for _, option in ipairs(THRESHOLD_OPTIONS) do
 		local slider = self.optionsPanel.thresholdSliders[option.key]
@@ -1395,6 +2044,10 @@ function WF:PrintHelp()
 	self:Print("/wf options")
 	self:Print("/wf lock | unlock")
 	self:Print("/wf mode never | mob | target | focus")
+	self:Print("/wf curse auto | elements | doom | agony | off")
+	self:Print("/wf curse groupscan on|off")
+	self:Print("/wf curse warlock on|off")
+	self:Print("/wf curse agonymobs on|off")
 	self:Print("/wf threshold lifetap|corruption|immolate|incinerate <seconds>")
 	self:Print("/wf background on|off")
 	self:Print("/wf border on|off")
@@ -1414,6 +2067,14 @@ function WF:PrintStatus()
 	self:Print("Text alignment: " .. (self.db.style.centerText and "centered" or "left"))
 	self:Print("ElvUI style: " .. (self.db.style.useElvUIStyle and "enabled" or "disabled"))
 	self:Print("ElvUI mover: " .. (self.db.style.useElvUIMover and "enabled" or "disabled"))
+	self:Print("Curse mode: " .. CURSE_MODE_LABELS[self.db.curse.mode])
+	self:Print("Curse group scan: " .. (self.db.curse.useGroupScan and "enabled" or "disabled"))
+	self:Print("Other Warlock coverage: " .. (self.db.curse.assumeWarlockCoverage and "assumed" or "ignored"))
+	self:Print("Agony on simple mobs: " .. (self.db.curse.preferAgonyOnMobs and "enabled" or "disabled"))
+	local expected, source, unitName = self:GetExpectedMagicVulnerabilityCoverage()
+	if expected then
+		self:Print("Expected Elements coverage: " .. source .. (unitName and (" from " .. unitName) or ""))
+	end
 	for _, option in ipairs(THRESHOLD_OPTIONS) do
 		self:Print(option.label .. ": " .. string.format("%.1f", self.db.thresholds[option.key]) .. "s")
 	end
@@ -1442,6 +2103,50 @@ function WF:HandleSlash(input)
 			self:Print("Active mode set to " .. ACTIVE_MODE_LABELS[mode] .. ".")
 		else
 			self:Print("Usage: /wf mode never | mob | target | focus")
+		end
+	elseif command == "curse" then
+		local curseCommand, curseValue = string.match(rest, "^(%S*)%s*(.-)%s*$")
+		curseCommand = string.lower(curseCommand or "")
+		curseValue = curseValue or ""
+
+		local mode = CURSE_MODE_ALIASES[curseCommand]
+		if mode and curseValue == "" then
+			self:SetCurseMode(mode)
+			self:Print("Curse mode set to " .. CURSE_MODE_LABELS[mode] .. ".")
+		elseif curseCommand == "mode" then
+			mode = CURSE_MODE_ALIASES[string.lower(curseValue)]
+			if mode and self:SetCurseMode(mode) then
+				self:Print("Curse mode set to " .. CURSE_MODE_LABELS[mode] .. ".")
+			else
+				self:Print("Usage: /wf curse auto | elements | doom | agony | off")
+			end
+		elseif curseCommand == "groupscan" or curseCommand == "group" or curseCommand == "scan" then
+			local value = ParseBoolean(curseValue)
+			if value == nil then
+				self:Print("Usage: /wf curse groupscan on|off")
+			else
+				self:SetCurseGroupScan(value)
+				self:Print("Curse group scan " .. (value and "enabled." or "disabled."))
+			end
+		elseif curseCommand == "warlock" or curseCommand == "locks" or curseCommand == "otherwarlock" then
+			local value = ParseBoolean(curseValue)
+			if value == nil then
+				self:Print("Usage: /wf curse warlock on|off")
+			else
+				self:SetAssumeWarlockCoverage(value)
+				self:Print("Other Warlock Elements coverage " .. (value and "assumed." or "ignored."))
+			end
+		elseif curseCommand == "agonymobs" or curseCommand == "mobs" or curseCommand == "simplemobs" then
+			local value = ParseBoolean(curseValue)
+			if value == nil then
+				self:Print("Usage: /wf curse agonymobs on|off")
+			else
+				self:SetPreferAgonyOnMobs(value)
+				self:Print("Agony on simple mobs " .. (value and "enabled." or "disabled."))
+			end
+		else
+			self:Print("Usage: /wf curse auto | elements | doom | agony | off")
+			self:Print("Extra: /wf curse groupscan|warlock|agonymobs on|off")
 		end
 	elseif command == "threshold" or command == "lead" then
 		local aura, seconds = string.match(rest, "^(%S+)%s+(%S+)$")
@@ -1537,6 +2242,7 @@ function WF:OnEvent(event, arg1)
 			self:CreateUI()
 			self:CreateOptionsPanel()
 			self:RegisterElvUIIntegration()
+			self:RefreshGroupCoverage(true)
 			return
 		end
 
@@ -1557,12 +2263,14 @@ function WF:OnEvent(event, arg1)
 		self:CreateOptionsPanel()
 		self:RegisterElvUIIntegration()
 		self:RefreshEligibility()
+		self:RefreshGroupCoverage(true)
 		self:UpdateAlerts()
 		return
 	end
 
 	if event == "PLAYER_REGEN_DISABLED" then
 		self:RefreshEligibility()
+		self:RefreshGroupCoverage(true)
 		self:UpdateAlerts()
 		return
 	end
@@ -1570,6 +2278,16 @@ function WF:OnEvent(event, arg1)
 	if event == "PLAYER_REGEN_ENABLED" then
 		self:HideAlerts()
 		return
+	end
+
+	if event == "INSPECT_TALENT_READY" then
+		self:HandleInspectTalentReady(arg1)
+		self:UpdateAlerts()
+		return
+	end
+
+	if event == "RAID_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
+		self:RefreshGroupCoverage(true)
 	end
 
 	if event == "UNIT_AURA" and arg1 ~= "player" and arg1 ~= "target" then
@@ -1595,6 +2313,10 @@ end
 
 WF.warningState = {}
 WF.expiringState = {}
+WF.inspectCache = {}
+WF.inspectQueue = {}
+WF.inspectQueued = {}
+WF.groupCoverage = {}
 
 SLASH_WARLOCKSFRIEND1 = "/wf"
 SLASH_WARLOCKSFRIEND2 = "/warlocksfriend"
@@ -1604,12 +2326,16 @@ end
 
 WF:RegisterEvent("ADDON_LOADED")
 WF:RegisterEvent("PLAYER_LOGIN")
+WF:RegisterEvent("PLAYER_ENTERING_WORLD")
 WF:RegisterEvent("PLAYER_REGEN_DISABLED")
 WF:RegisterEvent("PLAYER_REGEN_ENABLED")
 WF:RegisterEvent("PLAYER_TARGET_CHANGED")
 WF:RegisterEvent("PLAYER_FOCUS_CHANGED")
 WF:RegisterEvent("UNIT_AURA")
 WF:RegisterEvent("UNIT_HEALTH")
+WF:RegisterEvent("RAID_ROSTER_UPDATE")
+WF:RegisterEvent("PARTY_MEMBERS_CHANGED")
+WF:RegisterEvent("INSPECT_TALENT_READY")
 WF:RegisterEvent("CHARACTER_POINTS_CHANGED")
 WF:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 WF:RegisterEvent("PLAYER_TALENT_UPDATE")

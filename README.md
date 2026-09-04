@@ -1,6 +1,6 @@
 # WarlocksFriend
 
-WarlocksFriend is a World of Warcraft 3.3.5 addon for Demonology Warlocks. It shows combat alerts for filler spell priority, missing DoTs, expiring auras, and the Glyph of Life Tap spell power buff.
+WarlocksFriend is a World of Warcraft 3.3.5 addon for Demonology Warlocks. It shows combat alerts for filler spell priority, curse choice, missing DoTs, expiring auras, and the Glyph of Life Tap spell power buff.
 
 ## Requirements
 
@@ -17,6 +17,10 @@ The addon stays silent for non-warlocks and for warlocks without Metamorphosis.
   - Decimation active: Soul Fire
   - Molten Core active: Incinerate
   - Otherwise: Shadow Bolt
+- Curse recommendation priority:
+  - If the target does not have an external magic-vulnerability debuff: Curse of the Elements
+  - If Curse of the Elements is covered by Earth and Moon, Ebon Plague, or another Warlock: Curse of Doom on bosses
+  - If the target is a simple mob or player: Curse of Agony instead of Curse of Doom
 - Missing current-target debuff warnings:
   - Immolate
   - Corruption
@@ -55,6 +59,11 @@ Available settings:
   - Show background
   - Show border
   - Center text
+- Curse recommendation:
+  - Auto, always Elements, always Doom, always Agony, or disabled
+  - Use group scan
+  - Treat another Warlock as assigned to Curse of the Elements
+  - Prefer Curse of Agony on simple mobs
 - ElvUI integration, when available:
   - Use ElvUI style
   - Use ElvUI mover
@@ -93,6 +102,22 @@ Activation mode:
 /wf mode mob
 /wf mode target
 /wf mode focus
+```
+
+Curse recommendation:
+
+```text
+/wf curse auto
+/wf curse elements
+/wf curse doom
+/wf curse agony
+/wf curse off
+/wf curse groupscan on
+/wf curse groupscan off
+/wf curse warlock on
+/wf curse warlock off
+/wf curse agonymobs on
+/wf curse agonymobs off
 ```
 
 Expiration warning thresholds:
@@ -159,5 +184,7 @@ UnitLevel(unit) == -1
 ## Notes
 
 In normal Wrath gameplay, Incinerate is a direct damage spell rather than a target debuff. WarlocksFriend still includes an Incinerate expiration setting because some private servers may expose custom aura behavior. If no Incinerate aura exists on the target, that warning simply will not fire.
+
+Curse recommendations use the current target's debuffs first. Group and raid scanning is a prediction layer for Balance Druids with Earth and Moon, Unholy Death Knights with Ebon Plaguebringer, and optionally another Warlock assigned to Curse of the Elements. Talent inspection is asynchronous in Wrath, so it may take a few seconds to learn nearby group members.
 
 The addon does not cast spells or create protected action buttons. It only displays passive alerts.
