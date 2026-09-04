@@ -43,6 +43,7 @@ Available settings:
 - Lock alert frame
 - Active mode:
   - Never
+  - When targeting any hostile mob
   - Only when targeting a boss
   - Only when a boss is on focus
 - About-to-expire warning lead times:
@@ -89,6 +90,7 @@ Activation mode:
 
 ```text
 /wf mode never
+/wf mode mob
 /wf mode target
 /wf mode focus
 ```
@@ -138,9 +140,11 @@ ElvUI commands:
 /wf elvui anchors
 ```
 
-## Boss Activation
+## Activation Modes
 
-WarlocksFriend can be configured to activate only for boss fights. Boss detection checks for a hostile unit with:
+WarlocksFriend can be configured to stay disabled, activate on any hostile target, activate only while targeting a boss, or activate only while a boss is set as focus.
+
+Boss detection checks for a hostile unit with:
 
 ```text
 UnitClassification(unit) == "worldboss"

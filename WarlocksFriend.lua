@@ -39,6 +39,7 @@ local DEFAULTS = {
 
 local ACTIVE_MODES = {
 	{ key = "never", label = "Never" },
+	{ key = "target_any", label = "When targeting any hostile mob" },
 	{ key = "target_boss", label = "Only when targeting a boss" },
 	{ key = "focus_boss", label = "Only when a boss is on focus" },
 }
@@ -77,6 +78,15 @@ local ACTIVE_MODE_ALIASES = {
 	never = "never",
 	off = "never",
 	disabled = "never",
+	any = "target_any",
+	all = "target_any",
+	mob = "target_any",
+	mobs = "target_any",
+	simple = "target_any",
+	targetany = "target_any",
+	target_any = "target_any",
+	targetmob = "target_any",
+	target_mob = "target_any",
 	target = "target_boss",
 	targetboss = "target_boss",
 	target_boss = "target_boss",
@@ -616,6 +626,10 @@ function WF:IsActivationAllowed()
 
 	if self.db.activeMode == "never" then
 		return false
+	end
+
+	if self.db.activeMode == "target_any" then
+		return self:HasHostileTarget()
 	end
 
 	if self.db.activeMode == "target_boss" then
@@ -1380,7 +1394,7 @@ end
 function WF:PrintHelp()
 	self:Print("/wf options")
 	self:Print("/wf lock | unlock")
-	self:Print("/wf mode never | target | focus")
+	self:Print("/wf mode never | mob | target | focus")
 	self:Print("/wf threshold lifetap|corruption|immolate|incinerate <seconds>")
 	self:Print("/wf background on|off")
 	self:Print("/wf border on|off")
@@ -1427,7 +1441,7 @@ function WF:HandleSlash(input)
 		if mode and self:SetActiveMode(mode) then
 			self:Print("Active mode set to " .. ACTIVE_MODE_LABELS[mode] .. ".")
 		else
-			self:Print("Usage: /wf mode never | target | focus")
+			self:Print("Usage: /wf mode never | mob | target | focus")
 		end
 	elseif command == "threshold" or command == "lead" then
 		local aura, seconds = string.match(rest, "^(%S+)%s+(%S+)$")
